@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const express = require ('express');
 const pool = require('./db');
-const port = 7000;
+const port = 3000;
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const jwtSecret = process.env.JWT_SECRET;
@@ -102,7 +102,7 @@ app.post('/login', async (req, res) => {
             name: user.name,
             email: user.email,
             age: user.age
-        }, jwtSecret, { expiresIn: '1h' });
+        }, jwtSecret);
 
         res.status(200).json({
             message: 'Login successful',token });
@@ -161,74 +161,75 @@ app.post('/status',authenticateToken,async(req,res)=>{
 });
 
 
+app.post('/checkin', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    const clientTime = new Date(); // Using the client's PC time
 
-
-//check in status;
-
-app.post('/checkin',authenticateToken, async (req, res) => {
-    
-    console.log(req?.user);
-
-    let userId= req.user.id;
-
-    let existingUser= await pool.query('SELECT * FROM users WHERE id=$1', [userId]);        
-
-    const currentTime = new Date();
-
-    if (!existingUser) {
-        return res.status(400).send('User Not found');
-    }
 
     try {
-       
         const statusResult = await pool.query(
-            'SELECT status FROM statusId WHERE userId=$1 ORDER BY time DESC LIMIT 1',
+            'SELECT time, status FROM statusId WHERE userId=$1 ORDER BY time DESC LIMIT 1',
             [userId]
         );
 
-        let newStatus;
+        let lastStatus;
+   
+
+        if (statusResult.rows.length > 0) {
+            lastStatus = statusResult.rows[0].status;
+        }
+
+       
+        if (!lastStatus) {
+            await pool.query(
+                'INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)',
+                [userId, clientTime, statusEnum.Check_in]
+            );
+            return res.status(201).send('Check-in Successful');
+        }
 
         
-
-        if(!statusResult.rows[0]){
-            
-                await pool.query(
-                    `INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)`,
-                    [userId, currentTime, statusEnum.Check_in]
-                );
-                res.status(201).send('Check-in Successful');
-            
-        }else   if (statusResult.rows[0].status === statusEnum.Check_out) {
-
-            newStatus = statusEnum.Check_in;
+        if (lastStatus === statusEnum.Check_in) {
             await pool.query(
-                `INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)`,
-                [userId, currentTime, newStatus]
+                'INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)',
+                [userId, clientTime, statusEnum.Check_out]
             );
-
-            res.status(201).send('Check-in Successful');
-
-        } else if (statusResult.rows[0].status === statusEnum.Check_in) {
-          
-            newStatus = statusEnum.Check_out; 
-            await pool.query(
-                `INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)`,
-                [userId, currentTime, newStatus]
-            );
-            res.status(201).send('Check-out Successful');
+            return res.status(201).send('Check-out Successful');
         }
-      
+    
+        // If the user has checked in within the last 24 hours, block it
+
+        if(lastStatus === statusEnum.Check_out ){
+                
        
+            
+                const t2 = new Date();
+                t2.setHours(0, 0, 0, 0); // 00:00 today
+
+                const t4 = new Date();
+                t4.setHours(23, 59, 59, 999); // 23:59:59 today
+
+        const checkinResult = await pool.query(
+            `SELECT * FROM statusId  WHERE userId = $1 AND time BETWEEN $2 AND $3 AND status = $4`,
+            [userId, t2, t4, statusEnum.Check_in])
+
+        if (checkinResult.rows.length>0) {
+            return res.status(400).send('You have already checked in within the last 24 hours.');
+        }else{
+            await pool.query(
+                `INSERT INTO statusId (userId, time, status) VALUES($1, $2, $3)`,
+                [userId, clientTime, statusEnum.Check_in]);
+    
+                return res.status(201).send('Check in successfully');}
+            
+        
+        }; 
     } catch (error) {
-        console.log(error);
-        res.sendStatus(500);
+        console.error(error);
+        return res.sendStatus(500);
     }
 });
-
-
-
-app.listen(port,()=>console.log(`The Server is Running On Port:${port}`));
-
+app.listen(port, () => console.log(`The Server is Running On Port: ${port}`));
 
 
 
@@ -236,4 +237,4 @@ app.listen(port,()=>console.log(`The Server is Running On Port:${port}`));
 
 
 
-
+    
