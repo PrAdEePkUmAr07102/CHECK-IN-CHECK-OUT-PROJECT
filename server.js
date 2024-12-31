@@ -3,12 +3,18 @@ require('dotenv').config();
 
 const express = require ('express');
 const pool = require('./db');
-const port = 3000;
+const port = 9000;
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const jwtSecret = process.env.JWT_SECRET;
 
+// const express = require("express")
+// const pool = require("./db")
+// const port = 7000;
 
+
+// const app = express()
+// app.use(express.json())
 
 
 
@@ -113,6 +119,8 @@ app.post('/login', async (req, res) => {
         res.sendStatus(500);
     }
 });
+
+
 
 
 
@@ -229,8 +237,65 @@ app.post('/checkin', authenticateToken, async (req, res) => {
         return res.sendStatus(500);
     }
 });
-app.listen(port, () => console.log(`The Server is Running On Port: ${port}`));
 
+// Todo Table Creation with start_time and end_time
+app.post('/todos', authenticateToken, async (req, res) => {
+    try {
+        await pool.query(`
+            CREATE TABLE todos (
+                id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                userId UUID REFERENCES users(id),
+                todo_text VARCHAR(255),
+                date DATE,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP
+            )
+        `);
+        res.status(201).send('Todo Table Created Successfully with start_time and end_time');
+    } catch (error) {
+        console.log(error);
+        res.sendStatus(500);
+    }
+});
+
+app.post('/todos/create', authenticateToken, async (req, res) => {
+    const { todo_text, start_time, end_time, date } = req.body;
+
+    if (!todo_text || !start_time || !end_time || !date) {
+        return res.status(400).send('All fields are required');
+    }
+
+    const userId = req.user.id;
+
+    try {
+      
+        const todoExistsResult = await pool.query(
+            `SELECT * FROM todos 
+             WHERE userId = $1 AND date = $2 
+             AND ($3 < end_time AND $4 > start_time)`,
+            [userId, date, start_time, end_time]
+        );
+
+        if (todoExistsResult.rows.length > 0) {
+            return res.status(400).send('Todo already exists within the given time range');
+        }
+
+        // Insert the new todo if no overlapping todo found
+        else{await pool.query(
+            `INSERT INTO todos (userId, todo_text, date, start_time, end_time)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [userId, todo_text, date, start_time, end_time]
+        )};
+
+        res.status(201).send('Todo added successfully with start and end time');
+    } catch (error) {
+        console.log(error);
+        res.sendStatus(500);
+    }
+});
+
+
+app.listen(port,()=> console.log(`The server is running on port: ${port}`)); 
 
 
 
